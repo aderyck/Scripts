@@ -1,0 +1,191 @@
+---
+title: "Implementation of KNN-LWPLSR [SHORT VERSION]"
+author: "Antoine Deryck"
+date: "2025-07-06"
+output: html_document
+---
+
+1. Data importation and preparation
+```{r}
+## Install necessary packages
+pkgs <- c("rchemo", "readr", "ggplot2")
+to_install <- setdiff(pkgs, rownames(installed.packages()))
+if (length(to_install)) {install.packages(to_install)}
+
+## Load necessary packages
+library(rchemo)   # package for chemometrics (including KNN-LWPLS
+library(readr)    # loading csv files 
+library(ggplot2)  # for plot generation
+
+## Load the dataset Challenge 2018
+base_url <- paste0(
+  "https://raw.githubusercontent.com/aderyck/Data/main/",
+  "Spectroscopy/Challenge/Challenge2018"
+) # Github folder where csv files are stored
+
+X_file <- paste0(base_url, "/challenge2018_Xp.csv")
+Y_file <- paste0(base_url, "/challenge2018_Y.csv")
+
+X <- as.matrix(
+  read_delim(
+    X_file,
+    delim       = ";",
+    locale      = locale(decimal_mark = "."),
+    col_names   = TRUE,
+    col_types   = cols(.default = col_double())
+  )
+)
+
+Y <- read_delim(
+  Y_file,
+  delim          = ";",
+  locale         = locale(decimal_mark = "."),
+  col_names      = TRUE,
+  show_col_types = FALSE
+)
+
+y <- Y$conc # variable to predict (protein concentration)
+
+## Extract train and test data
+s <- (Y$test == 1) # get indices of test samples
+
+Xtrain   <- X[!s, ]
+Ytrain   <- Y[!s, ]
+ytrain   <- y[!s]
+typtrain <- Y$typ[!s]
+
+Xtest    <- X[s, , drop = FALSE]
+Ytest    <- Y[s, , drop = FALSE]
+ytest    <- y[s]
+```
+
+2. Model tuning
+```{r}
+## Split training data into calibration/validation
+ntrain  <- nrow(Xtrain)
+nval    <- 300
+
+val_idx <- round(seq(1, ntrain, length.out = nval))# systematic sampling
+cal_idx <- setdiff(seq_len(ntrain), val_idx)
+
+Xcal <- Xtrain[cal_idx, , drop = FALSE]
+ycal <- ytrain[cal_idx]
+
+Xval <- Xtrain[val_idx, , drop = FALSE]
+yval <- ytrain[val_idx]
+
+ncal <- length(cal_idx)
+
+## Build the grid of parameters for the model tuning
+pars <- mpars(
+  nlvdis = 15,
+  diss   = "mahal",
+  h      = c(1, 2, 4, 6, Inf),
+  k      = c(200, 350, 500, 1000)
+)
+
+## Compute and display the RMSE values on the validation set to select the optimal 
+## combination of parameters
+res <- gridscorelv(
+  Xcal, ycal,
+  Xval, yval,
+  score = rmsep,
+  fun   = lwplsr,
+  nlv   = 0:15,
+  pars  = pars,
+  verb  = FALSE
+)
+
+head(res)
+
+# for classification
+#model = lwplsrda()
+#res = gridscore(model, Xcal, ycal, Xval, yval; score = err, pars, nlv, verbose = false)
+#head res   # first rows of the result table
+
+## Visualise RMSE (or another metric) with a plot
+res$group <- with(res, paste0("nlvdis=", nlvdis, ", h=", h, ", k=", k))
+source(paste0(
+  "https://raw.githubusercontent.com/aderyck/Functions/main/",
+  "R/Plotting_tools/InteractPlot4Hyperparameters.R"
+))
+InteractPlot4Hyperparameters(
+  df    = res,
+  x     = "nlv",
+  y     = "y1",
+  group = "group",
+  name  = "",
+  xlab  = "Nb. LVs",
+  ylab  = "RMSEP (Validation)",
+  line_width = 1.5
+)
+```
+
+3. Final predictions
+```{r}
+## Extract best combination of hyperparameters
+best_hyperparams <- res[which.min(res$y1), ]
+best_hyperparams
+
+## Define model with selected hyperparameters
+model <- lwplsr(
+  Xtrain, ytrain,
+  nlvdis = best_hyperparams$nlvdis,
+  diss   = best_hyperparams$diss,
+  h      = best_hyperparams$h,
+  k      = best_hyperparams$k,
+  nlv    = best_hyperparams$nlv
+)
+
+# for classification
+#model <- lwplsrda(
+#   Xtrain, ytrain,
+#   nlvdis = best_hyperparams$nlvdis,
+#   diss   = best_hyperparams$diss,
+#   h      = best_hyperparams$h,
+#   k      = best_hyperparams$k,
+#   nlv    = best_hyperparams$nlv
+# )
+
+## Apply model to test set
+pred <- predict(model, Xtest)$pred
+head(pred)
+
+## Assess model performance
+mse_test <- mse(pred, ytest)
+print(mse_test)
+
+## Plot predicted vs observed values
+df_xy <- data.frame(
+  Pred = pred,
+  Obs  = ytest
+)
+
+ggplot(df_xy, aes(x = pred, y = ytest)) +
+  geom_point(
+    color = "red",
+    alpha = 0.5,
+    size  = 2,
+    shape = 16
+  ) +
+  geom_abline(
+    intercept = 0,
+    slope     = 1,
+    color     = "grey50",
+    linetype  = "dashed"
+  ) +
+  labs(
+    x     = "Predictions",
+    y     = "Observed test data",
+    title = "Protein concentration (%)"
+  ) +
+  expand_limits(x = 0, y = 0) +
+  theme_bw() +
+  theme(
+    plot.title   = element_text(size = 18, hjust = 0.5),
+    axis.title   = element_text(size = 14),
+    axis.text    = element_text(size = 12),
+    panel.grid.major = element_line(color = "grey80"),
+    panel.grid.minor = element_blank()
+  )
+```
