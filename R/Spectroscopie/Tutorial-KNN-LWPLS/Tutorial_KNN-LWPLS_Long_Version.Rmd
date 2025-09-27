@@ -1,0 +1,201 @@
+---
+title: "Implementation of KNN-LWPLSR [LONG VERSION]"
+author: "Antoine Deryck"
+date: "2025-07-06"
+output: html_document
+---
+
+1. Data importation and visualization
+```{r}
+## Install necessary packages
+pkgs <- c("rchemo", "readr", "tibble", "ggplot2")
+to_install <- setdiff(pkgs, rownames(installed.packages()))
+if (length(to_install)) install.packages(to_install)
+
+## Load necessary packages
+library(rchemo) # package for chemometrics (including KNN-LWPLS)  
+library(readr) # loading csv files 
+library(tibble) # for enhanced visualisation of outputs/results 
+library(ggplot2) # for plot generation 
+source("https://raw.githubusercontent.com/aderyck/Functions/main/R/Plotting_tools/InteractPlot4Spectra.R") # function for interactive plots of spectra, based on plotly and hosted on Github
+source("https://raw.githubusercontent.com/aderyck/Functions/main/R/Plotting_tools/InteractPlot4Hyperparameters.R") # function for interactive plots for hyperparameter selection, based on plotly and hosted on Github
+
+## Load the dataset challenge 2018
+base_url <-"https://raw.githubusercontent.com/aderyck/Data/main/Spectroscopy/Challenge/Challenge2018" # GitHub folder where csv files are stored
+X_file <- paste0(base_url, "/challenge2018_Xp.csv")
+Y_file <- paste0(base_url, "/challenge2018_Y.csv")
+X <- as.matrix(read_delim(X_file, delim = ";", locale = locale(decimal_mark = "."), col_names = TRUE, col_types = cols(.default = col_double())))
+Y <- read_delim(Y_file, delim = ";", locale = locale(decimal_mark = "."), col_names = TRUE, show_col_types = FALSE)
+
+## Display dimensions of X and its first rows
+dim(X)
+X_tb <- as_tibble(X)
+head(X_tb)
+
+## Display dimensions of Y and its first rows
+dim(Y)
+head(Y) 
+
+## Extract variable to predict from Y and wavelengths from X
+y <- Y$conc # variable to predict (protein concentration)
+str(y)
+wlst <- colnames(X) # wavelengths
+wl <- as.numeric(wlst)
+str(wl)
+
+## Display distribution of the sample types 
+group <- paste(Y$typ, Y$label, sep = " - ")
+enframe(table(group), name = "Group", value = "Frequency")
+
+## Plot spectra 
+idx <- sample(nrow(X), 30)
+InteractPlot4Spectra(X[idx,], name = "") # name = title of the plot
+
+## Compute and display Principal Component Analysis (PCA) 
+# perform PCA and keep 3 pc
+fm <- pcasvd(X, nlv = 3)
+scores <- fm$T
+colnames(scores) <- paste0("PC", seq_len(ncol(scores)))
+df3d <- as_tibble(scores) %>%
+  mutate(Type = group, SampleID = seq_len(nrow(.)))
+
+# color palette
+n_types <- length(unique(df3d$Type))
+base_pal <- brewer.pal(min(8, n_types), "Set2")
+pal      <- colorRampPalette(base_pal)(n_types)
+
+# scatter plot
+plot_ly(df3d, x = ~PC1, y = ~PC2, z = ~PC3, color = ~Type, colors = pal, type = "scatter3d", mode = "markers", marker = list(size = 2), hoverinfo = "text", text = ~paste("Sample:", SampleID)) %>%
+  layout(title = list(text = "PCA", x = 0.5, xanchor = "center", y = 0.90, yanchor = "top"),
+  scene = list(xaxis = list(title = "PC1", range = c(min(df3d$PC1), max(df3d$PC1)), zeroline = FALSE, showline = TRUE, mirror = TRUE),
+  yaxis = list(title = "PC2", range = c(min(df3d$PC2), max(df3d$PC2)), zeroline = FALSE, showline = TRUE, mirror = TRUE),
+  zaxis = list(title = "PC3", range = c(min(df3d$PC3), max(df3d$PC3)), zeroline = FALSE, showline = TRUE, mirror = TRUE)),
+    legend = list(title = list(text = "Type"), y = 0.5, yanchor   = "middle", itemsizing = "constant"))
+```
+
+2. Split training and test sets
+```{r}
+## Display number of training and test samples
+enframe(table(Y$test), name = "Dataset", value = "Number of samples") # train/test repartition already included in test column
+
+## Extract train and test data
+s <- (Y$test == 1) # get indices of test samples
+Xtrain   <- X[!s,]
+Ytrain   <- Y[!s,]
+ytrain   <- y[!s]
+typtrain <- Y$typ[!s]
+Xtest    <- X[s, , drop = FALSE]
+Ytest    <- Y[s, , drop = FALSE]
+ytest    <- y[s]
+typtest  <- Y$typ[s]
+ntrain <- nrow(Xtrain)
+ntest  <- nrow(Xtest)
+ntot   <- nrow(X)
+c(ntot = ntot, ntrain = ntrain, ntest = ntest)
+
+## Check representativeness of test set via PCA
+colnames(scores) <- paste0("PC", 1:3)
+df2d <- as_tibble(scores) %>% select(PC1, PC2) %>% mutate(Group = factor(ifelse(s, "1-Test", "0-Train")))
+
+ggplot(df2d, aes(x = PC1, y = PC2, color = Group)) + geom_point(size = 1.5, alpha = 0.8) + scale_color_manual(values = c("0-Train" = "blue", "1-Test" = "red")) + labs(x = "PC1", y = "PC2", color = "Group") + guides(color = guide_legend(override.aes = list(size = 2, alpha = 1))) + theme_bw() + theme_bw() + theme(panel.grid.major = element_line(color = "grey80"), panel.grid.minor = element_blank(), legend.title = element_text(size = 14), legend.text = element_text(size = 12), legend.key.size = unit(1.2, "lines"))
+
+## Check representativeness of test set via plot score (SD) vs. orthogonal distances (OD)
+# compute SD and thresholds
+sd_train_obj <- scordis(fm, X = X,    nlv = 5)
+sd_train <- sd_train_obj$res.train$d
+sd_cutoff <- sd_train_obj$cutoff
+sd_test <- scordis(fm, X = Xtest, nlv = 5)$res$d
+
+# compute OD and thresholds
+od_train_obj <- odis(fm, Xtrain = X, X = X,    nlv = 5)
+od_train <- od_train_obj$res.train$d
+od_cutoff <- od_train_obj$cutoff
+od_test      <- odis(fm, Xtrain = X, X = Xtest, nlv = 5)$res$d
+
+# combine into single df and plot
+df_dist <- rbind(data.frame(SD = sd_train, OD = od_train, Group = "0-Train", stringsAsFactors = FALSE), data.frame(SD = sd_test, OD = od_test, Group = "1-Test", stringsAsFactors = FALSE))
+
+ggplot(df_dist, aes(SD, OD, color = Group)) + geom_point(size = 1.5, alpha = 0.8) + scale_color_manual(values = c("0-Train" = "blue", "1-Test" = "red")) +   geom_vline(xintercept = sd_cutoff, linetype = "dashed") + geom_hline(yintercept = od_cutoff, linetype = "dashed") + labs(x = "SD", y = "OD", color = "Dataset") + guides(color = guide_legend(override.aes = list(size = 2, alpha = 1))) + theme_bw() + theme(panel.grid.major = element_line(color = "grey80"), panel.grid.minor = element_blank(), legend.title = element_text(size = 14), legend.text = element_text(size = 12), legend.key.size = unit(1.2, "lines"))
+
+## Check representativeness of test set via descriptive statistics
+stats <- function(x) c(mean=mean(x, na.rm=TRUE), std=sd(x, na.rm=TRUE), min=min(x, na.rm=TRUE), max=max(x, na.rm=TRUE), n=length(x), nmissing=sum(is.na(x)))
+res <- do.call(rbind, lapply(split(y, Y$test), stats))
+res_df  <- data.frame(Class=rownames(res), res, row.names=NULL, stringsAsFactors=FALSE)
+res_df
+
+
+## Display histogram number of train/test samples per protein concentration
+dfh <- data.frame(Protein = y, Group = factor(ifelse(s, "1-Test", "0-Train")))
+
+ggplot(dfh, aes(x = Protein, fill = Group)) + geom_histogram(data  = subset(dfh, Group == "0-Train"), bins  = 30, color = "grey95", size = 0.05, alpha = 1) + geom_histogram(data  = subset(dfh, Group == "1-Test"), bins  = 30, color = "grey95", size  = 0.05, alpha = 1) + scale_fill_manual(values = c("0-Train" = "steelblue", "1-Test" = "goldenrod")) + labs(x = "Protein", y    = "Nb. observations", fill = "") + theme_bw() + theme(legend.position = "top", axis.title = element_text(size = 12), axis.text = element_text(size = 10), legend.text = element_text(size = 11), panel.grid.major  = element_line(color = "grey80"), panel.grid.minor  = element_blank())
+```
+
+3. Model tuning
+```{r}
+## Split training data into calibration/validation
+nval   <- 300
+val_idx <- round(seq(1, ntrain, length.out = nval)) # systemic sampling
+cal_idx <- setdiff(seq_len(ntrain), val_idx)
+Xcal <- Xtrain[cal_idx, , drop = FALSE]
+ycal <- ytrain[cal_idx]
+Xval <- Xtrain[val_idx, , drop = FALSE]
+yval <- ytrain[val_idx]
+ncal <- length(cal_idx)
+c(ntot   = ntot, ntrain = ntrain, ntest  = ntest, ncal   = ncal, nval   = nval)
+
+## Build the grid of hyperparameters for the model tuning
+?lwplsr # display help-page of the function and hyperparameters’ descriptions
+## Below, more extended combinations could be considered (this is a simplification for the example)
+pars <- mpars(
+  nlvdis = 15,
+  diss   = "mahal",
+  h      = c(1, 2, 4, 6, Inf),
+  k      = c(200, 350, 500, 1000)
+) # The grid
+nrow(pars) # number of hyperparameter combinations considered
+
+## Compute and display the RMSEP values on the validation set to select the optimal combination 
+## of hyperparameters
+res <- gridscorelv(Xcal, ycal, Xval, yval, score = rmsep, fun = lwplsr, pars = pars, nlv = 0:15, verb = FALSE)
+head(res) # first rows of the result table
+
+# for classification
+#model = lwplsrda()
+#res = gridscore(model, Xcal, ycal, Xval, yval; score = err, pars, nlv, verbose = false) # for classification, only the misclassification rate (err) is provided by “gridscore”, consider other packages for unbalanced datasets
+#head res   # first rows of the result table
+
+## Visualise RMSEP (or another metric) with a graph
+res$group <- with(res, paste0("nlvdis=", nlvdis, ", h=", h, ", k=", k))
+
+InteractPlot4Hyperparameters(
+    df = res, x = "nlv", y = "y1", group = "group", 
+    name = "", xlab = "Nb. LVs", ylab = "RMSEP (Validation)",
+    line_width = 1.5)
+```
+
+4. Final predictions
+```{r}
+## Extract best combination of hyperparameters
+best_hyperparams <- res[which.min(res$y1), ]
+best_hyperparams
+
+## Define model with hyperparameters
+model <- lwplsr(Xtrain, ytrain, nlvdis = best_hyperparams$nlvdis, diss = best_hyperparams$diss, h = best_hyperparams$h, k = best_hyperparams$k, nlv = best_hyperparams$nlv)
+
+# for classification
+#model = lwplsrda(nlvdis = res.nlvdis[u], metric = res.metric[u], h = res.h[u], k = res.k[u], nlv = res.nlv[u])
+
+## Apply model to test set and get predictions
+pred <- predict(model, Xtest)$pred
+head(pred)
+
+## Assess model performance
+?mse # using the function “mse” from the rchemo package, several metrics are computed, see help page of “mse” for more information about how those metrics are computed
+mse <- mse(pred, ytest) # returns misclassification rate if categorical variable
+print(mse)
+
+## Plot predicted vs observed values
+df_xy <- data.frame(Pred = pred, Obs  = ytest)
+
+ggplot(df_xy, aes(x = pred, y = ytest)) + geom_point(color = "red", alpha = 0.5, size = 2, shape = 16) + geom_abline(intercept = 0, slope = 1, color = "grey50", linetype = "dashed") + labs(x = "Predictions", y = "Observed test data", title = "Protein concentration (%)") + expand_limits(x = 0, y = 0) + theme_bw() + theme(plot.title = element_text(size = 18, hjust = 0.5), axis.title = element_text(size = 14), axis.text = element_text(size = 12), panel.grid.major = element_line(color = "grey80"), panel.grid.minor = element_blank())
+```
