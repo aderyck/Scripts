@@ -143,11 +143,11 @@ model <- lwplsr(
 # )
 
 ## Apply model to test set
-pred <- predic(model, Xtest)$pred
+pred <- predict(model, Xtest)$pred
 head(pred)
 
 ## Assess model performance
-mse_test <- mse(pred, ytest)
+mse_test <- mse(pred, ytest) # set of indicators
 print(mse_test)
 
 ## Plot predicted vs observed values
