@@ -18,7 +18,7 @@ library(readr) # loading csv files
 library(ggplot2) # for plot generation 
 library(tibble) # for enhanced visualisation of outputs/results 
 source("https://raw.githubusercontent.com/aderyck/Functions/main/R/Plotting_tools/InteractPlot4Spectra.R") # function for interactive plots of spectra, based on plotly and hosted on Github
-source("https://raw.githubusercontent.com/aderyck/Functions/main/R/Plotting_tools/InteractPlot4Hyperparameters.R") # function for interactive plots for hyperparameter selection, based on plotly and hosted on Github
+source("https://raw.githubusercontent.com/aderyck/Functions/main/R/Plotting_tools/InteractPlot4Parameters.R") # function for interactive plots for parameter selection, based on plotly and hosted on Github
 
 ## Load the dataset challenge 2018
 base_url <-"https://raw.githubusercontent.com/aderyck/Data/main/Spectroscopy/Challenge/Challenge2018" # GitHub folder where csv files are stored
@@ -142,8 +142,8 @@ yval <- ytrain[val_idx]
 ncal <- length(cal_idx)
 c(ntot   = ntot, ntrain = ntrain, ntest  = ntest, ncal   = ncal, nval   = nval)
 
-## Build the grid of hyperparameters for the model tuning
-?lwplsr # display help-page of the function and hyperparameters’ descriptions
+## Build the grid of parameters for the model tuning
+?lwplsr # display help-page of the function and parameters’ descriptions
 ## Below, more extended combinations could be considered (this is a simplification for the example)
 pars <- mpars(
   nlvdis = 15,
@@ -151,10 +151,10 @@ pars <- mpars(
   h      = c(1, 2, 4, 6, Inf),
   k      = c(200, 350, 500, 1000)
 ) # The grid
-nrow(pars) # number of hyperparameter combinations considered
+nrow(pars) # number of parameter combinations considered
 
 ## Compute and display the RMSEP values on Val to select the optimal combination 
-## of hyperparameters
+## of parameters
 res <- gridscorelv(Xcal, ycal, Xval, yval, score = rmsep, fun = lwplsr, pars = pars, nlv = 0:15, verb = FALSE)
 head(res) # first rows of the result table
 
@@ -166,7 +166,7 @@ head(res) # first rows of the result table
 ## Visualise RMSEP (or another metric) with a graph
 res$group <- with(res, paste0("nlvdis=", nlvdis, ", h=", h, ", k=", k))
 
-InteractPlot4Hyperparameters(
+InteractPlot4Parameters(
     df = res, x = "nlv", y = "y1", group = "group", 
     name = "", xlab = "Nb. LVs", ylab = "RMSEP (Validation)",
     line_width = 1.5)
@@ -178,7 +178,7 @@ Final predictions
 best_params <- res[which.min(res$y1), ]
 best_params
 
-## Define model with hyperparameters
+## Define model with selected parameters
 model <- lwplsr(Xtrain, ytrain, nlvdis = best_params$nlvdis, diss = best_params$diss, h = best_params$h, k = best_params$k, nlv = best_params$nlv)
 
 # for classification
