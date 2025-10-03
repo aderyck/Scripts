@@ -190,7 +190,7 @@ head(pred)
 
 ## Assess model performance
 ?mse # using the function “mse” from the rchemo package, several metrics are computed, see help page of “mse” for more information about how those metrics are computed
-mse <- mse(pred, ytest) # returns misclassification rate if categorical variable
+mse <- mse(pred, ytest) # # set of indicators for regression, returns misclassification rate if categorical variable
 print(mse)
 
 ## Plot predicted vs observed values
