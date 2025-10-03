@@ -5,15 +5,10 @@ date: "2025-07-06"
 output: html_document
 ---
 
-1. Data importation and preparation
+Data importation and preparation
 ```{r}
-## Install necessary packages
-pkgs <- c("rchemo", "readr", "ggplot2")
-to_install <- setdiff(pkgs, rownames(installed.packages()))
-if (length(to_install)) {install.packages(to_install)}
-
-## Load necessary packages
-library(rchemo)   # package for chemometrics (including KNN-LWPLS
+## Load necessary packages (those packages need to be installed beforehand)
+library(rchemo)   # package for chemometrics (including KNN-LWPLS)
 library(readr)    # loading csv files 
 library(ggplot2)  # for plot generation
 
@@ -23,7 +18,7 @@ base_url <- paste0(
   "Spectroscopy/Challenge/Challenge2018"
 ) # Github folder where csv files are stored
 
-X_file <- paste0(base_url, "/challenge2018_Xp.csv")
+X_file <- paste0(base_url, "/challenge2018_Xp.csv") # preprocessed spectra
 Y_file <- paste0(base_url, "/challenge2018_Y.csv")
 
 X <- as.matrix(
@@ -46,7 +41,7 @@ Y <- read_delim(
 
 y <- Y$conc # variable to predict (protein concentration)
 
-## Extract train and test data
+## Extract train and test data (Train/Test)
 s <- (Y$test == 1) # get indices of test samples
 
 Xtrain   <- X[!s, ]
@@ -59,9 +54,9 @@ Ytest    <- Y[s, , drop = FALSE]
 ytest    <- y[s]
 ```
 
-2. Model tuning
+Model tuning
 ```{r}
-## Split training data into calibration/validation
+## Split Train into calibration and validation data (Cal/Val)
 ntrain  <- nrow(Xtrain)
 nval    <- 300
 
@@ -84,7 +79,7 @@ pars <- mpars(
   k      = c(200, 350, 500, 1000)
 )
 
-## Compute and display the RMSE values on the validation set to select the optimal 
+## Compute and display the RMSEP values on Val to select the optimal 
 ## combination of parameters
 res <- gridscorelv(
   Xcal, ycal,
@@ -107,9 +102,9 @@ head(res)
 res$group <- with(res, paste0("nlvdis=", nlvdis, ", h=", h, ", k=", k))
 source(paste0(
   "https://raw.githubusercontent.com/aderyck/Functions/main/",
-  "R/Plotting_tools/InteractPlot4Hyperparameters.R"
+  "R/Plotting_tools/InteractPlot4Parameters.R"
 ))
-InteractPlot4Hyperparameters(
+InteractPlot4Parameters(
   df    = res,
   x     = "nlv",
   y     = "y1",
@@ -121,34 +116,34 @@ InteractPlot4Hyperparameters(
 )
 ```
 
-3. Final predictions
+Final predictions
 ```{r}
-## Extract best combination of hyperparameters
-best_hyperparams <- res[which.min(res$y1), ]
-best_hyperparams
+## Extract best combination of parameters
+best_params <- res[which.min(res$y1), ]
+best_params
 
-## Define model with selected hyperparameters
+## Define model with selected parameters
 model <- lwplsr(
   Xtrain, ytrain,
-  nlvdis = best_hyperparams$nlvdis,
-  diss   = best_hyperparams$diss,
-  h      = best_hyperparams$h,
-  k      = best_hyperparams$k,
-  nlv    = best_hyperparams$nlv
+  nlvdis = best_params$nlvdis,
+  diss   = best_params$diss,
+  h      = best_params$h,
+  k      = best_params$k,
+  nlv    = best_params$nlv
 )
 
 # for classification
 #model <- lwplsrda(
 #   Xtrain, ytrain,
-#   nlvdis = best_hyperparams$nlvdis,
-#   diss   = best_hyperparams$diss,
-#   h      = best_hyperparams$h,
-#   k      = best_hyperparams$k,
-#   nlv    = best_hyperparams$nlv
+#   nlvdis = best_params$nlvdis,
+#   diss   = best_params$diss,
+#   h      = best_params$h,
+#   k      = best_params$k,
+#   nlv    = best_params$nlv
 # )
 
 ## Apply model to test set
-pred <- predict(model, Xtest)$pred
+pred <- predic(model, Xtest)$pred
 head(pred)
 
 ## Assess model performance
